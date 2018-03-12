@@ -1,39 +1,41 @@
+# -*- coding: utf-8 -*-
+#!/usr/bin/env python
 
-"""
-Listen 31257
-<VirtualHost *:31257>
-  DocumentRoot "/var/services/web/comix-server"
-  AllowEncodedSlashes On
-  DirectoryIndex index.php
-  AliasMatch ^/welcome.102(.*)$ /var/services/web/comix-server/welcome.php
-  AliasMatch ^/manga(.*)$ /var/services/web/comix-server/handler.php
-</VirtualHost>
-
-welcome.php {
-  <?php
-  echo "I am a generous god!\r\n";
-  echo "allowDownload=True\r\n";
-  echo "allowImageProcess=True";
-  ?>
-}
-
-handler.php {
-
-}
-"""
 import os
+import sys
 import json
 import codecs
+import logging
+import zipfile
 import flask
+
+from io import BytesIO
 from functools import wraps
 #from flask import request
+if sys.version_info.major == 3:
+    from urllib.parse import *
+    from io import StringIO
+else:
+    from urllib import *
+    import StringIO
 
-app = flask.Flask(__name__)
+__version__ = (0, 2, 0)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+CONF = json.loads(open('comix.json', 'r').read())
+
 image_ext = ["jpg", "gif", "png", "tif", "bmp", "jpeg", "tiff"]
 archive_ext = ["zip", "rar", "cbz", "cbr"]
 allows = image_ext + archive_ext
-ROOT = 'Z:/data03'
-CONTENTS = 'comics'
+ROOT = CONF['ROOT']
+CONTENTS = CONF['CONTENTS']
+os.sep = '/'
+
+app = flask.Flask(__name__)
+
+
 if not os.path.exists(os.path.join(ROOT, CONTENTS)):
     raise Exception("No Folder")
 
@@ -51,6 +53,7 @@ def requires_auth(f):
     def decorated(*args, **kwargs):
         auth = flask.request.authorization
         if not auth or not check_auth(auth.username, auth.password):
+            logger.error("Failed to login")
             return authenticate()
         return f(*args, **kwargs)
     return decorated
@@ -58,36 +61,116 @@ def requires_auth(f):
 @app.route('/welcome.102/')
 @requires_auth
 def welcome():
-    welcome_str = """I am a generous god!\r\n""" \
+    logger.error("Welcome")
+    welcome_str = """Hello!\r\n""" \
         """allowDownload=True\r\n""" \
-        """allowImageProcess=True"""
+        """autoResizing=False\r\n""" \
+        """minVersion=1.3\r\n""" \
+        """supportJson=True"""
     return welcome_str
 
 @app.route('/')
 @requires_auth
 def root():
-    #data = json.dumps({'Directories':[CONTENTS],"Files":[]}).strip()
-    r = flask.Response(CONTENTS)
-    del r.headers['Content-Type']
+    logger.info("root directory")
+    data = json.dumps({'Directories':[CONTENTS],"Files":[]}, ensure_ascii=False)
+    r = flask.Response(data, headers=None)
     return r
+
+def get_ext(path_name):
+    ext = os.path.splitext(path_name)[-1]
+    if ext:
+        return ext[1:]
+    return ext
+
+def list_directories(path):
+    data = {'Directories': [], 'Files': []}
+    for name in os.listdir(path):
+        name = name.encode('utf-8')
+        logger.info("Type: %s, %s", type(name), name)
+        if get_ext(name) not in archive_ext:
+            data['Directories'].append(name)
+    response = flask.Response(json.dumps(data, ensure_ascii=False), headers=None)
+    return response
+
+def get_real_path(base, abs_path):
+    abs_path = unquote(abs_path)
+    real_path = os.path.join(base, abs_path)
+    logger.info("ABS_PATH: %s, %s", real_path, [ord(c) for c in real_path])
+    return real_path
 
 @app.route('/<path:req_path>')
 @requires_auth
 def manga(req_path):
     BASE_DIR = ROOT
-    abs_path = os.path.join(ROOT, req_path)
-    if not os.path.exists(abs_path):
-        app.logger.error("No file: %s", abs_path)
-        return flask.abort(404)
+    ROOT_CONTENTS = os.path.join(BASE_DIR, CONTENTS)
+    abs_path = get_real_path(BASE_DIR, req_path)
+    data = {'Directories': [], 'Files': []}
 
+    if abs_path == ROOT_CONTENTS:
+        return list_directories(ROOT_CONTENTS)
+
+    if get_ext(abs_path) not in archive_ext and  '.zip' in abs_path:
+        return get_file_in_zip_file(abs_path)
+
+    if not os.path.exists(abs_path):
+        logger.error("No Path: %s", abs_path)
+        return ('', 204)
+    ## Render Image Files
     if os.path.isfile(abs_path):
+        if get_ext(abs_path) in archive_ext:
+            logger.info("Archive File: %s", abs_path)
+            return list_zip_files(abs_path)
         return flask.send_file(abs_path)
-    files = os.listdir(abs_path)
-    data = "\n".join(["%s" % name for name in files])
-    data = data.encode('utf-8')
-    r = flask.Response(data)
-    del r.headers['Content-Type']
-    return r
+    ## Send list of files
+    if os.path.isdir(abs_path):
+        for name in os.listdir(abs_path):
+            #if os.path.isdir(os.path.join(abs_path, name)) or get_ext(name) == 'zip':
+            if os.path.isdir(os.path.join(abs_path, name)):
+                data['Directories'].append(name)
+            elif get_ext(name) not in archive_ext:
+                data['Files'].append(name)
+        logger.info("File: %s", data)
+        response = flask.Response(json.dumps(data, ensure_ascii=False), headers=None)
+        return response
+
+def get_file_in_zip_file(path):
+    """
+    """
+    zip_path, in_zip_path = path.split('.zip')
+    zip_path += '.zip'
+    in_zip_path = in_zip_path[1:]
+    logger.info('zip_path: %s, %s', zip_path, [ord(c) for c in in_zip_path])
+    if not os.path.exists(zip_path):
+        app.logger.error("No file: %s", zip_path)
+        return ('', 204)
+    with zipfile.ZipFile(zip_path) as zf:
+        in_zip_path = in_zip_path.encode('utf-8')
+        for name in zf.namelist():
+            logger.info("%s, %s, %s, %s", name, in_zip_path, [ord(c) for c in name], [ord(c) for c in in_zip_path])
+            if name == in_zip_path:
+                logger.info("Loaded :%s", str(name))
+                with zf.open(name) as f:
+                    bytesIO = BytesIO()
+                    bytesIO.write(f.read())
+                    bytesIO.seek(0)
+                    return flask.send_file(bytesIO, attachment_filename=os.path.basename(in_zip_path), as_attachment=True)
+        logger.error("No file Name: %s", in_zip_path)
+        return ('', 204)
+
+def list_zip_files(zip_path):
+    data = {'Directories': [], 'Files': []}
+    with zipfile.ZipFile(zip_path) as zf:
+        dirs = [name for name in zf.namelist() if name.endswith('/')]
+        subdirs = set([name.split('/')[0] for name in dirs])
+        for dirname in subdirs:
+            dirname = dirname.decode('latin-1')
+            logger.info('list_zip_files: %s, %s', dirname, [hex(ord(c)) for c in dirname])
+            data['Directories'].append(dirname)
+        data = json.dumps(data, ensure_ascii=False)
+        logger.info("%s", data)
+        r = flask.Response(data, headers=None)
+        return r
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=31258)
+    app.run(host='0.0.0.0', port=31258, debug=True)
