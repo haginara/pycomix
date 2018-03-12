@@ -39,7 +39,7 @@ if not os.path.exists(os.path.join(ROOT, CONTENTS)):
     raise Exception("No Folder")
 
 def check_auth(username, password):
-    return username == 'AirComix' and password == 'test'
+    return username == 'AirComix' and password == CONF['PASSWORD']
 
 def authenticate():
     return flask.Response(
@@ -170,4 +170,4 @@ def list_zip_files(zip_path):
         return r
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=31258, debug=True)
+    app.run(host=CONF['HOST'], port=CONF['PORT'], debug=True)
