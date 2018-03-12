@@ -4,7 +4,6 @@
 import os
 import sys
 import json
-import codecs
 import logging
 import zipfile
 import flask
@@ -72,7 +71,7 @@ def welcome():
 @app.route('/')
 @requires_auth
 def root():
-    logger.info("root directory")
+    logger.debug("root directory")
     data = json.dumps({'Directories':[CONTENTS],"Files":[]}, ensure_ascii=False)
     r = flask.Response(data, headers=None)
     return r
@@ -87,7 +86,6 @@ def list_directories(path):
     data = {'Directories': [], 'Files': []}
     for name in os.listdir(path):
         name = name.encode('utf-8')
-        logger.info("Type: %s, %s", type(name), name)
         if get_ext(name) not in archive_ext:
             data['Directories'].append(name)
     response = flask.Response(json.dumps(data, ensure_ascii=False), headers=None)
@@ -147,7 +145,7 @@ def get_file_in_zip_file(path):
     with zipfile.ZipFile(zip_path) as zf:
         in_zip_path = in_zip_path.encode('utf-8')
         for name in zf.namelist():
-            logger.info("%s, %s, %s, %s", name, in_zip_path, [ord(c) for c in name], [ord(c) for c in in_zip_path])
+            logger.debug("%s, %s, %s, %s", name, in_zip_path, [ord(c) for c in name], [ord(c) for c in in_zip_path])
             if name == in_zip_path:
                 logger.info("Loaded :%s", str(name))
                 with zf.open(name) as f:
@@ -165,10 +163,9 @@ def list_zip_files(zip_path):
         subdirs = set([name.split('/')[0] for name in dirs])
         for dirname in subdirs:
             dirname = dirname.decode('latin-1')
-            logger.info('list_zip_files: %s, %s', dirname, [hex(ord(c)) for c in dirname])
+            logger.debug('list_zip_files: %s, %s', dirname, [hex(ord(c)) for c in dirname])
             data['Directories'].append(dirname)
         data = json.dumps(data, ensure_ascii=False)
-        logger.info("%s", data)
         r = flask.Response(data, headers=None)
         return r
 
