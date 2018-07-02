@@ -16,6 +16,7 @@ if sys.version_info.major == 3:
 else:
     from urllib import *
     import StringIO
+import argparse
 
 import flask
 from werkzeug.routing import BaseConverter
@@ -46,12 +47,12 @@ def get_ext(path_name):
 
 app = flask.Flask(__name__)
 
+
 def check_auth(username, password):
     return username == 'AirComix' and password == CONF['PASSWORD']
 
 def authenticate():
     return flask.Response(
-        'Could not verify your access level for that URL.\n'
         'You have to login with proper credentials', 401,
         {'WWW-Authenticate': 'Basic realm="Login Required"'})
 
